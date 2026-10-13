@@ -2,8 +2,8 @@ import SwiftUI
 import AppKit
 
 // Usage: swift scripts/make-promo.swift <outDir> <framesDir>
-// Renders marketing/post.png, marketing/social-preview.png and 450 reel frames (0000.png...) into <framesDir>.
-// Run from the repo root; reads assets/icon.png, assets/screenshot-dark.png.
+// Renders marketing/post.png, marketing/social-preview.png, marketing/twitter.png and the reel, landscape reel and copy-for-AI clip frames into <framesDir>, <framesDir>-land and <framesDir>-ai.
+// Run from the repo root; reads assets/icon.png, assets/screenshot-dark.png, assets/failure-dark.png.
 let args = CommandLine.arguments
 guard args.count == 3 else { FileHandle.standardError.write(Data("usage: make-promo.swift <outDir> <framesDir>\n".utf8)); exit(2) }
 let outDir = args[1], framesDir = args[2]
@@ -59,14 +59,14 @@ struct Shot: View {
 }
 
 struct Strip: View {
-    let building: Bool; let angle: Double; var w: CGFloat = 1080; var h: CGFloat = 56
+    let building: Bool; let angle: Double; var w: CGFloat = 1080; var h: CGFloat = 56; var idle = "checkmark.icloud"
     var body: some View {
         let k = h / 56
         HStack(spacing: 0) {
             Image(systemName: "apple.logo").font(.system(size: 28 * k))
             Spacer()
             HStack(spacing: 30 * k) {
-                Image(systemName: building ? "arrow.triangle.2.circlepath" : "checkmark.icloud").font(.system(size: 26 * k))
+                Image(systemName: building ? "arrow.triangle.2.circlepath" : idle).font(.system(size: 26 * k))
                     .rotationEffect(.degrees(building ? angle : 0)).frame(width: 36 * k)
                 Image(systemName: "wifi").font(.system(size: 26 * k))
                 Image(systemName: "battery.75").font(.system(size: 26 * k))
@@ -233,21 +233,149 @@ struct Assets { let icon: NSImage; let dark: NSImage }
             Strip(building: building, angle: angle, w: W, h: sh).at(0, 0)
         }
         .opacity(old)
-        // scene 5
-        VStack(spacing: 0) {
-            Icon(img: a.icon, size: 300).arrive(p(f, t0))
-            H("DeployBar", 130).arrive(p(f, t0 + 4)).padding(.top, 36)
-            body("Cloudflare and Vercel deploys in your Mac's menu bar.", 40)
-                .multilineTextAlignment(.center).frame(maxWidth: 1000)
-                .arrive(p(f, t0 + 8)).padding(.top, 20)
-            Text("Free and open source").font(.system(size: 32, weight: .semibold)).foregroundStyle(.white)
-                .padding(.horizontal, 36).padding(.vertical, 16)
-                .overlay(Capsule().stroke(accent, lineWidth: 3))
-                .arrive(p(f, t0 + 12)).padding(.top, 48)
-            Text("github.com/maestro3517/deploybar").font(.system(size: 34, weight: .medium)).foregroundStyle(.white.opacity(0.8))
-                .arrive(p(f, t0 + 16)).padding(.top, 30)
+        outro(f, a, t0: t0)
+    }
+}
+
+/// Closing card shared by the clips: icon, name, tagline, "Free and open source", repo link.
+func outro(_ f: Int, _ a: Assets, t0: Int) -> some View {
+    VStack(spacing: 0) {
+        Icon(img: a.icon, size: 300).arrive(p(f, t0))
+        H("DeployBar", 130).arrive(p(f, t0 + 4)).padding(.top, 36)
+        body("Cloudflare and Vercel deploys in your Mac's menu bar.", 40)
+            .multilineTextAlignment(.center).frame(maxWidth: 1000)
+            .arrive(p(f, t0 + 8)).padding(.top, 20)
+        Text("Free and open source").font(.system(size: 32, weight: .semibold)).foregroundStyle(.white)
+            .padding(.horizontal, 36).padding(.vertical, 16)
+            .overlay(Capsule().stroke(accent, lineWidth: 3))
+            .arrive(p(f, t0 + 12)).padding(.top, 48)
+        Text("github.com/maestro3517/deploybar").font(.system(size: 34, weight: .medium)).foregroundStyle(.white.opacity(0.8))
+            .arrive(p(f, t0 + 16)).padding(.top, 30)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+}
+
+// MARK: copy-for-AI clip
+/// Generic terminal window for the clip; no product branding.
+struct Terminal<Content: View>: View {
+    let w: CGFloat; let h: CGFloat; @ViewBuilder let content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                ForEach([0xFF5F57, 0xFEBC2E, 0x28C840], id: \.self) { Circle().fill(Color(hex: UInt32($0))).frame(width: 18, height: 18) }
+                Spacer()
+                Text("your AI agent").font(.system(size: 20, weight: .medium)).foregroundStyle(.white.opacity(0.45))
+                Spacer(); Color.clear.frame(width: 78)
+            }
+            .padding(.horizontal, 22).frame(height: 54).background(Color(hex: 0x2A2938))
+            content.padding(32).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(width: w, height: h).background(Color(hex: 0x16151F))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+        .shadow(color: .black.opacity(0.5), radius: 40, y: 20)
+    }
+}
+
+struct Pointer: View {
+    var body: some View {
+        Path { p in
+            p.addLines([CGPoint(x: 0, y: 0), CGPoint(x: 0, y: 34), CGPoint(x: 9, y: 26), CGPoint(x: 15, y: 40),
+                        CGPoint(x: 21, y: 37), CGPoint(x: 15, y: 24), CGPoint(x: 26, y: 24)])
+            p.closeSubpath()
+        }
+        .fill(.white).overlay(Path { p in
+            p.addLines([CGPoint(x: 0, y: 0), CGPoint(x: 0, y: 34), CGPoint(x: 9, y: 26), CGPoint(x: 15, y: 40),
+                        CGPoint(x: 21, y: 37), CGPoint(x: 15, y: 24), CGPoint(x: 26, y: 24)])
+            p.closeSubpath()
+        }.stroke(.black, lineWidth: 2))
+        .frame(width: 26, height: 40).scaleEffect(1.4, anchor: .topLeading)
+        .shadow(color: .black.opacity(0.4), radius: 6, y: 3)
+    }
+}
+
+/// 1920x1080, 360 frames: build fails, click Copy for AI, paste into an agent, outro.
+@MainActor func aiClip(_ f: Int, _ a: Assets, failure: NSImage) -> some View {
+    let old = 1 - p(f, 290, 10)
+    let o1 = 1 - p(f, 70, 10), o2 = 1 - p(f, 168, 10)
+    // popover: 720 wide, its "Copy for AI" button sits at (468, 90)-(655, 131) in the 680 px image
+    let pw: CGFloat = 720, k = pw / 680, px: CGFloat = 1920 - 120 - pw, py: CGFloat = 50 + (1030 - 682 * k) / 2
+    let bx = px + 468 * k, by = py + 90 * k, bw = 187 * k, bh = 41 * k
+    let popIn = p(f, 78, 22), popOut = p(f, 168, 14)
+    let move = ease(Double(f - 98) / 28)
+    let cx = bx + bw * 0.8 + 200 * (1 - move), cy = by + bh * 0.7 + 260 * (1 - move)  // lands bottom-right so "Copied" stays readable
+    let press = f >= 128 && f < 134 ? 0.85 : 1.0
+    let copied = f >= 130
+    let tIn = p(f, 178, 22)
+    let mono = Font.system(size: 22, design: .monospaced)
+    let left = { (v: AnyView) in v.frame(width: 760, alignment: .leading).padding(.leading, 90).padding(.top, 50)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading) }
+    return ZStack(alignment: .topLeading) {
+        canvas
+        ZStack(alignment: .topLeading) {
+            // scene 1: the failure notification
+            left(AnyView(dotHeadline("Build failed.", red, w: 760).arrive(p(f, 14), o1)))
+            Banner(icon: a.icon, ok: false, w: 920).at(1920 - 920 - 90, 50 + 40)
+                .offset(x: 1100 * (1 - p(f, 8, 22)), y: -400 * p(f, 66, 16))
+            // scene 2: the popover and the click
+            left(AnyView(VStack(alignment: .leading, spacing: 24) {
+                H("Click Copy for AI.", 96)
+                body("The error, the commit and the build log, on your clipboard as a ready-made prompt.", 38).frame(width: 680, alignment: .leading)
+            }.arrive(p(f, 84), o2)))
+            ZStack(alignment: .topLeading) {
+                Shot(img: failure, w: pw).at(px, py)
+                if copied {
+                    HStack(spacing: 8 * k) {
+                        Image(systemName: "checkmark").font(.system(size: 18 * k, weight: .bold)).foregroundStyle(green)
+                        Text("Copied").font(.system(size: 21 * k, weight: .medium)).foregroundStyle(.white)
+                    }
+                    .frame(width: bw, height: bh)
+                    .background(RoundedRectangle(cornerRadius: 9 * k, style: .continuous).fill(Color(hex: 0x3A3A3D)))
+                    .at(bx, by)
+                }
+                Pointer().scaleEffect(press, anchor: .topLeading).at(cx, cy).opacity(p(f, 94, 8))
+            }
+            .opacity(popIn * (1 - popOut)).offset(x: -80 * popOut, y: -40 * (1 - popIn))
+            // scene 3: paste into the agent
+            left(AnyView(VStack(alignment: .leading, spacing: 24) {
+                H("Paste it into your agent.", 96)
+                body("Claude Code, Cursor, Codex: it gets everything it needs to fix the build.", 38).frame(width: 680, alignment: .leading)
+            }.arrive(p(f, 186))))
+            Terminal(w: 940, h: 620) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 14) {
+                        Text("›").font(mono).foregroundStyle(accent)
+                        Text("⌘V").font(.system(size: 20, weight: .semibold)).foregroundStyle(.white)
+                            .padding(.horizontal, 12).padding(.vertical, 4)
+                            .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.12)))
+                            .opacity(p(f, 196, 6) * (1 - p(f, 206, 6)))
+                    }
+                    Group {
+                        Text("My Cloudflare deploy of \"status\" failed.").foregroundStyle(.white)
+                        Text("Branch: main")
+                        Text("Commit: 9f3b2c1 Rewrite incident timeline")
+                        Text(" ")
+                        Text("Build log (last 11 lines):")
+                        Text("✘ [ERROR] Could not resolve \"../lib/timeline\"").foregroundStyle(red)
+                        Text("    src/pages/incidents/[id].astro:3:25")
+                        Text("Failed: error occurred while running build command")
+                        Text(" ")
+                        Text("Find the cause of this build failure and fix it.").foregroundStyle(.white)
+                    }
+                    .font(mono).foregroundStyle(.white.opacity(0.62)).opacity(p(f, 206, 6))
+                    HStack(alignment: .top, spacing: 14) {
+                        Circle().fill(green).frame(width: 12, height: 12).padding(.top, 9)
+                        Text("lib/timeline.ts was renamed to incident-timeline.ts in 9f3b2c1. Updating the import and rebuilding…")
+                            .font(.system(size: 24, weight: .medium)).foregroundStyle(.white).lineSpacing(4)
+                    }
+                    .padding(.top, 24).arrive(p(f, 238), dy: 16)
+                }
+            }
+            .at(1920 - 90 - 940, 50 + (1030 - 620) / 2).opacity(tIn).offset(y: 40 * (1 - tIn))
+            Strip(building: false, angle: 0, w: 1920, h: 50, idle: "exclamationmark.icloud").at(0, 0)
+        }
+        .opacity(old)
+        outro(f, a, t0: 296)
     }
 }
 
@@ -332,4 +460,7 @@ MainActor.assumeIsolated {
     for f in 0..<450 { write(reel(f, a), 1080, 1920, String(format: "\(framesDir)/%04d.png", f)) }
     try! FileManager.default.createDirectory(atPath: "\(framesDir)-land", withIntermediateDirectories: true)
     for f in 0..<450 { write(reel(f, a, land: true), 1920, 1080, String(format: "\(framesDir)-land/%04d.png", f)) }
+    try! FileManager.default.createDirectory(atPath: "\(framesDir)-ai", withIntermediateDirectories: true)
+    let failure = load("failure-dark.png")
+    for f in 0..<360 { write(aiClip(f, a, failure: failure), 1920, 1080, String(format: "\(framesDir)-ai/%04d.png", f)) }
 }
