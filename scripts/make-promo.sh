@@ -15,8 +15,8 @@ if ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx264; then
 else
     VCODEC=(-c:v h264_videotoolbox -b:v 8M)
 fi
-for pair in frames:reel frames-land:twitter frames-ai:copy-for-ai; do
+for pair in frames:reel frames-land:twitter frames-ai:copy-for-ai frames-tour:tour; do
     ffmpeg -y -loglevel error -framerate 30 -i "$TMP/${pair%%:*}/%04d.png" "${VCODEC[@]}" \
         -pix_fmt yuv420p -an -movflags +faststart "marketing/${pair##*:}.mp4"
 done
-echo "wrote marketing/reel.mp4 marketing/post.png marketing/social-preview.png marketing/twitter.png marketing/twitter.mp4 marketing/copy-for-ai.mp4"
+echo "wrote marketing/reel.mp4 marketing/post.png marketing/social-preview.png marketing/twitter.png marketing/twitter.mp4 marketing/copy-for-ai.mp4 marketing/tour.mp4"

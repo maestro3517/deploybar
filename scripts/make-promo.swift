@@ -2,8 +2,8 @@ import SwiftUI
 import AppKit
 
 // Usage: swift scripts/make-promo.swift <outDir> <framesDir>
-// Renders marketing/post.png, marketing/social-preview.png, marketing/twitter.png and the reel, landscape reel and copy-for-AI clip frames into <framesDir>, <framesDir>-land and <framesDir>-ai.
-// Run from the repo root; reads assets/icon.png, assets/screenshot-dark.png, assets/failure-dark.png.
+// Renders marketing/post.png, marketing/social-preview.png, marketing/twitter.png and the reel, landscape reel, copy-for-AI clip and feature tour frames into <framesDir>, <framesDir>-land, <framesDir>-ai and <framesDir>-tour.
+// Run from the repo root; reads assets/icon.png, assets/screenshot-dark.png, assets/failure-dark.png, assets/timeline-dark.png, assets/setup-dark.png.
 let args = CommandLine.arguments
 guard args.count == 3 else { FileHandle.standardError.write(Data("usage: make-promo.swift <outDir> <framesDir>\n".utf8)); exit(2) }
 let outDir = args[1], framesDir = args[2]
@@ -379,6 +379,136 @@ struct Pointer: View {
     }
 }
 
+// MARK: 20 s feature tour
+/// A scene's visibility: whips in from the right over 8 frames, out to the left over the 6 before `e`.
+struct Cut { let vis: Double; let dx: CGFloat }
+func cut(_ f: Int, _ s: Int, _ e: Int) -> Cut {
+    let i = s == 0 ? 1 : p(f, s, 8), o = p(f, e - 6, 6)
+    return Cut(vis: i * (1 - o), dx: 160 * (1 - i) - 160 * o)
+}
+extension View {
+    func show(_ c: Cut) -> some View { opacity(c.vis).offset(x: c.dx) }
+}
+
+/// Build-time bars like the menu's: taller is slower, red failed.
+struct BigBars: View {
+    var body: some View {
+        let bars: [(Double, Bool)] = [(0.48, false), (0.52, false), (0.5, false), (0.2, true), (0.55, false), (1.0, false), (0.5, false), (0.47, false)]
+        VStack(alignment: .leading, spacing: 28) {
+            HStack(alignment: .bottom, spacing: 18) {
+                ForEach(Array(bars.enumerated()), id: \.offset) { _, b in
+                    RoundedRectangle(cornerRadius: 6).fill(b.1 ? red : green.opacity(0.85)).frame(width: 46, height: 340 * b.0)
+                }
+            }
+            .frame(height: 340, alignment: .bottom)
+            HStack(spacing: 14) {
+                Circle().fill(green).frame(width: 18, height: 18)
+                Text("storefront-web").font(.system(size: 34, weight: .semibold)).foregroundStyle(.white)
+                Image(systemName: "triangle.fill").font(.system(size: 20, weight: .semibold)).foregroundStyle(.white)
+            }
+        }
+        .padding(48)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color(hex: 0x1E1E22)))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+        .shadow(color: .black.opacity(0.5), radius: 40, y: 20)
+    }
+}
+
+struct TourImages { let failure: NSImage; let timeline: NSImage; let setup: NSImage }
+
+/// 1920x1080, 600 frames (20 s): every feature in fast cuts, then the outro.
+@MainActor func tour(_ f: Int, _ a: Assets, _ im: TourImages) -> some View {
+    let left = { (v: AnyView) in v.frame(width: 800, alignment: .leading).padding(.leading, 90).padding(.top, 50)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading) }
+    let right = { (v: AnyView) in v.padding(.trailing, 110).padding(.top, 50)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing) }
+    func headline(_ s: String, _ sub: String? = nil, dot: Color? = nil, _ start: Int) -> AnyView {
+        AnyView(VStack(alignment: .leading, spacing: 24) {
+            if let dot { dotHeadline(s, dot, w: 800).arrive(p(f, start + 2, 10)) } else { H(s, 96).arrive(p(f, start + 2, 10)) }
+            if let sub { body(sub, 40).arrive(p(f, start + 8, 10)) }
+        })
+    }
+    // copy-for-AI scene geometry: the "Copy for AI" button sits at (468, 90)-(655, 131) in the 680 px popover image
+    let s5 = 212, pw: CGFloat = 720, k = pw / 680, px: CGFloat = 1920 - 110 - pw, py: CGFloat = 50 + (1030 - 682 * k) / 2
+    let bx = px + 468 * k, by = py + 90 * k, bw = 187 * k, bh = 41 * k
+    let move = ease(Double(f - s5 - 14) / 22)
+    let press = f >= s5 + 38 && f < s5 + 44 ? 0.85 : 1.0
+    let building = f >= 48 && f < 108
+    let broken = f >= 160 && f < 348
+    let mono = Font.system(size: 22, design: .monospaced)
+    return ZStack(alignment: .topLeading) {
+        canvas
+        ZStack(alignment: .topLeading) {
+            // 1. all projects
+            left(AnyView(VStack(alignment: .leading, spacing: 0) {
+                H("Every deploy.", 120).arrive(p(f, 2, 10))
+                H("One glance.", 120, 0.62).arrive(p(f, 10, 10))
+            })).show(cut(f, 0, 48))
+            right(AnyView(Shot(img: a.dark, h: 860).scaleEffect(1 + 0.08 * (1 - p(f, 0, 30))))).show(cut(f, 0, 48))
+            // 2. start popover + progress
+            left(headline("Know the second it starts.", "And how long it'll take.", 48)).show(cut(f, 48, 108))
+            StartPop(fraction: 0.12 + 0.8 * clamp(Double(f - 52) / 52), angle: Double(f) * 14)
+                .scaleEffect(0.92 + 0.08 * p(f, 50, 10), anchor: .top)
+                .at(1920 - 302 - 280, 50 + 22).opacity(cut(f, 48, 108).vis)
+            // 3. live
+            left(headline("Know the second it's live.", dot: green, 108)).show(cut(f, 108, 160))
+            Banner(icon: a.icon, ok: true, w: 920).at(1920 - 920 - 90, 50 + 40).show(cut(f, 110, 160))
+            // 4. broken
+            left(headline("Or the second it breaks.", dot: red, 160)).show(cut(f, 160, 212))
+            Banner(icon: a.icon, ok: false, w: 920).at(1920 - 920 - 90, 50 + 40).show(cut(f, 162, 212))
+            // 5. copy for AI
+            left(headline("Copy the error for your AI.", "Error, commit and build log, as a ready-made prompt.", s5)).show(cut(f, s5, 294))
+            ZStack(alignment: .topLeading) {
+                Shot(img: im.failure, w: pw).at(px, py)
+                if f >= s5 + 40 {
+                    HStack(spacing: 8 * k) {
+                        Image(systemName: "checkmark").font(.system(size: 18 * k, weight: .bold)).foregroundStyle(green)
+                        Text("Copied").font(.system(size: 21 * k, weight: .medium)).foregroundStyle(.white)
+                    }
+                    .frame(width: bw, height: bh)
+                    .background(RoundedRectangle(cornerRadius: 9 * k, style: .continuous).fill(Color(hex: 0x3A3A3D)))
+                    .at(bx, by)
+                }
+                Pointer().scaleEffect(press, anchor: .topLeading)
+                    .at(bx + bw * 0.8 + 200 * (1 - move), by + bh * 0.7 + 260 * (1 - move)).opacity(p(f, s5 + 10, 6))
+            }
+            .show(cut(f, s5, 294))
+            // 6. paste into the agent
+            left(headline("Paste. Your agent fixes it.", "Claude Code, Cursor, Codex.", 294)).show(cut(f, 294, 348))
+            right(AnyView(Terminal(w: 900, h: 520) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Group {
+                        Text("My Cloudflare deploy of \"status\" failed.").foregroundStyle(.white)
+                        Text("Commit: 9f3b2c1 Rewrite incident timeline")
+                        Text("✘ [ERROR] Could not resolve \"../lib/timeline\"").foregroundStyle(red)
+                        Text("Failed: error occurred while running build command")
+                    }
+                    .font(mono).foregroundStyle(.white.opacity(0.62))
+                    HStack(alignment: .top, spacing: 14) {
+                        Circle().fill(green).frame(width: 12, height: 12).padding(.top, 9)
+                        Text("lib/timeline.ts was renamed in 9f3b2c1. Updating the import and rebuilding…")
+                            .font(.system(size: 24, weight: .medium)).foregroundStyle(.white).lineSpacing(4)
+                    }
+                    .padding(.top, 24).arrive(p(f, 314), dy: 16)
+                }
+            })).show(cut(f, 294, 348))
+            // 7. timeline
+            left(headline("Click any app for its story.", "When, which commit, how long.", 348)).show(cut(f, 348, 400))
+            right(AnyView(Shot(img: im.timeline, w: 760))).show(cut(f, 348, 400))
+            // 8. slow builds
+            left(headline("Spot slow builds.", "Taller is slower. Red failed.", 400)).show(cut(f, 400, 452))
+            right(AnyView(BigBars())).show(cut(f, 400, 452))
+            // 9. private
+            left(headline("Your tokens stay in your Keychain.", "Free and open source. No account, no server.", 452)).show(cut(f, 452, 516))
+            right(AnyView(Shot(img: im.setup, h: 880))).show(cut(f, 452, 516))
+            Strip(building: building, angle: building ? 360 * ease(Double((f - 48) % 30) / 22) : 0, w: 1920, h: 50,
+                  idle: broken ? "exclamationmark.icloud" : "checkmark.icloud").at(0, 0)
+        }
+        .opacity(1 - p(f, 514, 8))
+        outro(f, a, t0: 520)
+    }
+}
+
 // MARK: post + social preview
 @MainActor func post(_ a: Assets) -> some View {
     let sh: CGFloat = 640 * a.dark.size.height / a.dark.size.width
@@ -463,4 +593,7 @@ MainActor.assumeIsolated {
     try! FileManager.default.createDirectory(atPath: "\(framesDir)-ai", withIntermediateDirectories: true)
     let failure = load("failure-dark.png")
     for f in 0..<360 { write(aiClip(f, a, failure: failure), 1920, 1080, String(format: "\(framesDir)-ai/%04d.png", f)) }
+    try! FileManager.default.createDirectory(atPath: "\(framesDir)-tour", withIntermediateDirectories: true)
+    let im = TourImages(failure: failure, timeline: load("timeline-dark.png"), setup: load("setup-dark.png"))
+    for f in 0..<600 { write(tour(f, a, im), 1920, 1080, String(format: "\(framesDir)-tour/%04d.png", f)) }
 }
