@@ -112,6 +112,7 @@ struct Deploy: Identifiable, Hashable {
     let createdAt: Date
     var finishedAt: Date? = nil  // when the build stopped, if the API says
     let url: URL?              // dashboard/inspector link to open on click
+    var logURL: URL? = nil     // API endpoint for this deploy's build log, if the platform has one
     let isProduction: Bool
     // A build stuck for 2 h is treated as dead so the menu bar stops spinning.
     var isActive: Bool { (state == .queued || state == .building) && createdAt > Date(timeIntervalSinceNow: -7200) }
@@ -149,6 +150,7 @@ enum SelfTest {
             ("notification transitions", notificationTransitions),
             ("start alerts", startAlerts),
             ("provider setup", providerSetup),
+            ("build log parsing", buildLogParsing),
             ("cloudflare auth errors", { isAuthError("Invalid token") && isAuthError("Authentication error") && !isAuthError("HTTP 500") ? nil : "isAuthError misclassifies" }),
         ]
         var allPassed = true
@@ -211,6 +213,31 @@ enum SelfTest {
         if alerts(.queued, .building) { return "queued->building should not alert" }
         if alerts(nil, .ready) { return "new ready deploy should not alert" }
         if alerts(nil, .building, age: 3 * 3600) { return "3 h old building deploy should not alert" }
+        return nil
+    }
+
+    private static func buildLogParsing() -> String? {
+        let vercel = #"""
+        [{"type":"stdout","text":"ok"},{"type":"stderr","text":"\u001b[31mError: boom\u001b[39m"},{"type":"delimiter","text":"x"}]
+        """#
+        guard let events = try? JSONSerialization.jsonObject(with: Data(vercel.utf8)) else { return "vercel fixture unparseable" }
+        let v = logLines(events)
+        if v.count != 2 || v[1] != "Error: boom" { return "vercel parse gave \(v)" }
+        if logLines(parseJSON(#"{"result":{"lines":[[1,"a"],[2,"b"]]}}"#)) != ["a", "b"] { return "cloudflare builds parse wrong" }
+        if logLines(parseJSON(#"{"result":{"data":[{"ts":"x","line":"c"}]}}"#)) != ["c"] { return "pages parse wrong" }
+        let dep = Deploy(id: "x", provider: .cloudflare, project: "p", repo: "p", branch: "main", commit: "abc1234", message: "m",
+                         state: .failed, createdAt: Date(), url: nil, isProduction: false)
+        let p = agentPrompt(dep, log: ["FIRST"] + (2...200).map { "line \($0)" })
+        if !p.contains("last 150 lines") || !p.contains("Find the cause of this build failure and fix it.") || p.contains("FIRST") {
+            return "agentPrompt wrong"
+        }
+        if vercelDeploys(parseJSON(vercelFixture), scope: "&teamId=t1").first?.logURL?.absoluteString.hasSuffix("&teamId=t1") != true {
+            return "vercel logURL missing scope"
+        }
+        if byID(pagesDeploys(account: "acct1", parseJSON(pagesFixture)))["p1"]?.logURL?.absoluteString
+            != "https://api.cloudflare.com/client/v4/accounts/acct1/pages/projects/site-a/deployments/p1/history/logs" {
+            return "pages logURL wrong"
+        }
         return nil
     }
 
@@ -314,7 +341,7 @@ enum SelfTest {
 
 // MARK: - Mappers
 
-func vercelDeploys(_ json: [String: Any]) -> [Deploy] {
+func vercelDeploys(_ json: [String: Any], scope: String = "") -> [Deploy] {
     (json["deployments"] as? [[String: Any]] ?? []).compactMap { d -> Deploy? in
         guard let id = d["uid"] as? String, let name = d["name"] as? String else { return nil }
         let meta = d["meta"] as? [String: Any] ?? [:]
@@ -328,6 +355,7 @@ func vercelDeploys(_ json: [String: Any]) -> [Deploy] {
             createdAt: Date(timeIntervalSince1970: ((d["created"] as? Double) ?? 0) / 1000),
             finishedAt: (d["ready"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) },
             url: (d["inspectorUrl"] as? String).flatMap(URL.init(string:)),
+            logURL: URL(string: "https://api.vercel.com/v3/deployments/\(id)/events?builds=1&limit=-1\(scope)"),
             isProduction: (d["target"] as? String) == "production")
     }
 }
@@ -346,6 +374,7 @@ func cloudflareBuilds(worker: String, account: String, _ json: [String: Any]) ->
             createdAt: parseISO((b["created_on"] as? String) ?? (b["created_at"] as? String)) ?? .distantPast,
             finishedAt: parseISO(b["stopped_on"] as? String),
             url: URL(string: "https://dash.cloudflare.com/\(account)/workers/services/view/\(worker)/production/builds/\(uuid)"),
+            logURL: URL(string: "\(cfBase)/accounts/\(account)/builds/builds/\(uuid)/logs"),
             isProduction: true)
     }
 }
@@ -384,6 +413,7 @@ func pagesDeploys(account: String, _ json: [String: Any]) -> [Deploy] {
             createdAt: parseISO(dep["created_on"] as? String) ?? .distantPast,
             finishedAt: (dep["latest_stage"] as? [String: Any]).flatMap { parseISO($0["ended_on"] as? String) },
             url: URL(string: "https://dash.cloudflare.com/\(account)/pages/view/\(name)/\(id)"),
+            logURL: URL(string: "\(cfBase)/accounts/\(account)/pages/projects/\(name)/deployments/\(id)/history/logs"),
             isProduction: (dep["environment"] as? String) == "production")
     }
 }
@@ -422,6 +452,49 @@ private func pagesState(_ stage: [String: Any]?) -> DeployState {
     }
 }
 
+// MARK: - Build logs
+
+/// Text lines from any of the three build-log response shapes, ANSI colour codes stripped.
+func logLines(_ json: Any) -> [String] {
+    var lines: [String] = []
+    if let events = json as? [[String: Any]] {
+        lines = events.compactMap { e -> String? in
+            guard ["stdout", "stderr", "command"].contains(e["type"] as? String ?? "") else { return nil }
+            return e["text"] as? String ?? (e["payload"] as? [String: Any])?["text"] as? String
+        }
+    } else if let result = (json as? [String: Any])?["result"] as? [String: Any] {
+        if let pairs = result["lines"] as? [[Any]] {
+            lines = pairs.compactMap { $0.count > 1 ? $0[1] as? String : nil }
+        } else if let rows = result["data"] as? [[String: Any]] {
+            lines = rows.compactMap { $0["line"] as? String }
+        }
+    }
+    return lines.map {
+        $0.replacingOccurrences(of: "\u{1B}\\[[0-9;]*[A-Za-z]", with: "", options: .regularExpression)
+          .replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression)
+    }
+}
+
+/// Fetches a deploy's build log lines (ANSI colour codes stripped). Throws on network/API errors or when there is no log URL or token.
+func fetchBuildLog(_ d: Deploy) async throws -> [String] {
+    guard let url = d.logURL, let token = d.provider.token else {
+        throw ProviderError(message: "No build log for this deploy")
+    }
+    return logLines(try await getAny(url.absoluteString, token))
+}
+
+/// Ready-to-paste text for an AI coding agent: what failed, where, and the last 150 log lines in a code fence.
+func agentPrompt(_ d: Deploy, log: [String]) -> String {
+    let tail = log.suffix(150)
+    var s = "My \(d.provider.displayName) deploy of \"\(d.project)\" failed.\n"
+    if let b = d.branch { s += "Branch: \(b)\n" }
+    if let c = d.commit { s += "Commit: \(c)\(d.message.map { " \($0)" } ?? "")\n" }
+    if let u = d.url { s += "Dashboard: \(u.absoluteString)\n" }
+    s += "\nBuild log (last \(tail.count) lines):\n"
+    s += tail.isEmpty ? "(no build log available)\n" : "```text\n\(tail.joined(separator: "\n"))\n```\n"
+    return s + "\nFind the cause of this build failure and fix it."
+}
+
 // MARK: - Fetching
 
 private struct ProviderError: Error { let message: String }
@@ -441,7 +514,7 @@ private func fetchVercel(_ token: String) async -> ([Deploy], [String]) {
     for scope in scopes {
         do {
             let json = try await getJSON("https://api.vercel.com/v6/deployments?limit=20\(scope)", token)
-            deploys += vercelDeploys(json)
+            deploys += vercelDeploys(json, scope: scope)
         } catch {
             errors.append(errLine("Vercel", error))
         }
@@ -523,13 +596,14 @@ private func cloudflareAccount(_ token: String) async throws -> String {
     return id
 }
 
-private func getJSON(_ url: String, _ token: String) async throws -> [String: Any] {
+private func getAny(_ url: String, _ token: String) async throws -> Any {
     guard let u = URL(string: url) else { throw ProviderError(message: "bad URL") }
     var req = URLRequest(url: u)
     req.timeoutInterval = 20
     req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     let (data, resp) = try await URLSession.shared.data(for: req)
-    let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    let any = (try? JSONSerialization.jsonObject(with: data)) ?? [String: Any]()
+    let json = any as? [String: Any] ?? [:]
     let cfErr = (json["errors"] as? [[String: Any]])?.first?["message"] as? String
     let vercelErr = (json["error"] as? [String: Any])?["message"] as? String
     if let m = cfErr ?? vercelErr { throw ProviderError(message: m) }
@@ -537,7 +611,11 @@ private func getJSON(_ url: String, _ token: String) async throws -> [String: An
         throw ProviderError(message: "HTTP \(code)")
     }
     if (json["success"] as? Bool) == false { throw ProviderError(message: "request failed") }
-    return json
+    return any
+}
+
+private func getJSON(_ url: String, _ token: String) async throws -> [String: Any] {
+    (try await getAny(url, token)) as? [String: Any] ?? [:]
 }
 
 // MARK: - Tokens

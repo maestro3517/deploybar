@@ -82,10 +82,12 @@ enum Launcher {
             try? rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent(file))
         }
         let timelineApp = store.groups.flatMap(\.apps).first { $0.id == "vercel/storefront-web" }
+        let failedApp = store.groups.flatMap(\.apps).first { $0.id == "cloudflare/status" }
         let startApp = store.groups.flatMap(\.apps).first { $0.id == "vercel/dashboard" }
         for (name, look) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             render("\(name).png", look, ContentView(store: store))
             if demo, let timelineApp { render("timeline-\(name).png", look, TimelinePopover(app: timelineApp)) }
+            if demo, let failedApp { render("failure-\(name).png", look, TimelinePopover(app: failedApp, logPreview: demoFailureLog)) }
             if demo, let startApp {
                 render("start-\(name).png", look, StartAlertView(deploys: [startApp.latest], store: store, onClose: {}, onHover: { _ in }))
             }
@@ -95,6 +97,21 @@ enum Launcher {
         }
     }
 }
+
+/// Build log shown in the failure snapshot (a realistic wrangler failure).
+private let demoFailureLog: [String] = [
+    "Running custom build: npm run build",
+    "> status-page@1.4.0 build",
+    "> astro build",
+    "12:41:07 [build] output: \"static\"",
+    "12:41:09 [build] Building static entrypoints...",
+    "src/pages/incidents/[id].astro:42:17",
+    "✘ [ERROR] Could not resolve \"../lib/timeline\"",
+    "    src/pages/incidents/[id].astro:3:25:",
+    "      3 │ import { buildTimeline } from \"../lib/timeline\";",
+    "        ╵                               ~~~~~~~~~~~~~~~~~~",
+    "Failed: error occurred while running build command",
+]
 
 /// Deploys that just finished (ready or failed) and should notify.
 func finishedTransitions(previous: [String: DeployState], fresh: [Deploy], firstLoad: Bool,

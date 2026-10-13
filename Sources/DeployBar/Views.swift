@@ -371,6 +371,7 @@ private struct BoardRow: View {
 /// Popover for one app: who it is, a way to open it, then its recent deploys.
 struct TimelinePopover: View {
     let app: AppHistory
+    var logPreview: [String]? = nil
     private var d: Deploy { app.latest }
 
     var body: some View {
@@ -390,10 +391,78 @@ struct TimelinePopover: View {
                 .disabled(d.url == nil)
             }
             Divider()
+            if d.state == .failed && (d.logURL != nil || logPreview != nil) {
+                FailureLog(deploy: d, preview: logPreview)
+                Divider()
+            }
             AppTimeline(app: app)
         }
         .padding(12)
         .frame(width: 340)
+    }
+}
+
+/// A failed deploy's build log tail plus a button that copies a ready-made prompt for an AI coding agent.
+struct FailureLog: View {
+    let deploy: Deploy
+    var preview: [String]? = nil   // fixed lines for snapshots; skips the network
+    @State private var lines: [String]? = nil
+    @State private var error: String? = nil
+    @State private var copied = false
+
+    private var tail: String {
+        let t = (lines ?? []).suffix(40)
+        return t.isEmpty ? "No log lines" : t.joined(separator: "\n")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("Build log", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.red)
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(agentPrompt(deploy, log: lines ?? []), forType: .string)
+                    copied = true
+                    Task { try? await Task.sleep(nanoseconds: 2_000_000_000); copied = false }
+                } label: {
+                    Label(copied ? "Copied" : "Copy for AI", systemImage: copied ? "checkmark" : "doc.on.doc").font(.caption)
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                .disabled(lines == nil && error == nil)
+                .help("Copies the error and build log as a prompt for your AI coding agent")
+            }
+            if lines != nil {
+                // Lines don't wrap, so compiler carets stay under the code they point at. Opens at the end, where the error is.
+                ScrollView([.vertical, .horizontal]) {
+                    Text(tail)
+                        .font(.system(size: 10, design: .monospaced))
+                        .textSelection(.enabled)
+                        .fixedSize()
+                        .padding(6).padding(.bottom, 10)  // room for the horizontal scroller
+                }
+                .defaultScrollAnchor(.bottomLeading)
+                .frame(maxWidth: .infinity).frame(height: 130)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+            } else if let error {
+                Text("Couldn't load the build log: \(error)")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack {
+                    ProgressView().controlSize(.mini)
+                    Text("Loading build log…").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .task(id: deploy.id) {
+            if let preview { lines = preview; return }
+            do { lines = try await fetchBuildLog(deploy) } catch {
+                let m = Mirror(reflecting: error).children.first { $0.label == "message" }?.value as? String
+                self.error = m ?? error.localizedDescription
+            }
+        }
     }
 }
 

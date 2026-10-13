@@ -20,6 +20,7 @@ You ship ten times a day. Your AI agent pushes, a build starts somewhere, and yo
 - **Know the second it starts.** A small popover slides out of the menu bar icon when a build starts, with a live progress bar. It never takes focus from what you're typing.
 - **Know the second it's live.** A notification for every deploy that finishes, with the project, branch and commit message. Click it to jump to the deploy.
 - **Know the second it breaks.** Failed apps turn red and show the commit that broke them, so you know exactly what to fix (or what to paste back into your AI).
+- **Hand the error to your AI.** Click a failed app to see the tail of its build log, then Copy for AI to put the error, commit and log on your clipboard as a ready-made prompt for Claude Code, Cursor or Codex.
 - **See how long you'll wait.** A live progress bar against that app's usual build time: "About 27s left".
 - **Spot slow builds.** Each app shows a bar for each recent build. Taller means slower, red means failed.
 - **Click for the story.** Click an app to see its recent deploys as a timeline: when, which commit, how long. Click any of them, or Open in Vercel / Cloudflare, to jump to the dashboard.
