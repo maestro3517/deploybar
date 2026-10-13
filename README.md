@@ -27,6 +27,13 @@ You ship ten times a day. Your AI agent pushes, a build starts somewhere, and yo
 - **All your projects, one glance.** Cloudflare Workers, Pages and Vercel side by side, grouped by repo.
 - **Free, open source, private.** Runs on your Mac and talks only to the Cloudflare and Vercel APIs. Your tokens stay in your Keychain.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/failure-dark.png">
+    <img src="assets/failure-light.png" width="340" alt="A failed deploy's build log with a Copy for AI button">
+  </picture>
+</p>
+
 Requires macOS 14 or later and the Swift toolchain (install it with `xcode-select --install`).
 
 ## Get it running in 2 minutes
