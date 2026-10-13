@@ -104,6 +104,53 @@ struct Banner: View {
     }
 }
 
+/// Promo copy of the app's dark "Deploy started" popover (StartAlert.swift), drawn `k` times larger.
+/// Its arrow sits at the top centre, so pin it with the centre under the menu bar icon.
+struct StartPop: View {
+    let fraction: Double; let angle: Double; var k: CGFloat = 1.75
+    var body: some View {
+        let dim = Color.white.opacity(0.55)
+        VStack(alignment: .leading, spacing: 8 * k) {
+            HStack(spacing: 6 * k) {
+                Image(systemName: "hammer.fill").font(.system(size: 12 * k)).foregroundStyle(.orange)
+                Text("Deploy started").font(.system(size: 12 * k, weight: .semibold)).foregroundStyle(dim)
+                Spacer()
+                Image(systemName: "xmark.circle.fill").font(.system(size: 13 * k)).foregroundStyle(.white.opacity(0.35))
+            }
+            VStack(alignment: .leading, spacing: 3 * k) {
+                HStack(spacing: 6 * k) {
+                    Circle().trim(from: 0, to: 0.7).stroke(dim, style: StrokeStyle(lineWidth: 1.5 * k, lineCap: .round))
+                        .frame(width: 9 * k, height: 9 * k).rotationEffect(.degrees(angle))
+                    Text("dashboard").font(.system(size: 13 * k, weight: .semibold)).foregroundStyle(.white)
+                    Image(systemName: "triangle.fill").font(.system(size: 8 * k, weight: .semibold)).foregroundStyle(.white)
+                    Text("Preview").font(.system(size: 10 * k, weight: .medium)).foregroundStyle(dim)
+                        .padding(.horizontal, 5 * k).padding(.vertical, 1 * k)
+                        .overlay(Capsule().strokeBorder(.white.opacity(0.2), lineWidth: k))
+                }
+                Text("Add billing page skeleton").font(.system(size: 12 * k)).foregroundStyle(dim)
+                Text("feat/billing-page · c3e81f7").font(.system(size: 10 * k)).foregroundStyle(.white.opacity(0.3))
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.white.opacity(0.1))
+                    Capsule().fill(.white).frame(width: 296 * k * fraction)
+                }
+                .frame(width: 296 * k, height: 5 * k).padding(.top, 2 * k)
+                HStack(spacing: 6 * k) {
+                    Text("\(Int(fraction * 100))%").font(.system(size: 10 * k, weight: .semibold).monospacedDigit()).foregroundStyle(.white)
+                    Text("About \(Int(64 * (1 - fraction)))s left").font(.system(size: 10 * k)).foregroundStyle(dim)
+                }
+            }
+        }
+        .padding(12 * k).frame(width: 320 * k, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10 * k, style: .continuous).fill(Color(hex: 0x262626)))
+        .overlay(RoundedRectangle(cornerRadius: 10 * k, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 1))
+        .overlay(alignment: .top) {
+            Path { p in p.move(to: CGPoint(x: 0, y: 9 * k)); p.addLine(to: CGPoint(x: 9 * k, y: 0)); p.addLine(to: CGPoint(x: 18 * k, y: 9 * k)) }
+                .fill(Color(hex: 0x262626)).frame(width: 18 * k, height: 9 * k).offset(y: -9 * k + 1)
+        }
+        .shadow(color: .black.opacity(0.5), radius: 30, y: 14)
+    }
+}
+
 func dotHeadline(_ s: String, _ c: Color, size: CGFloat = 96, w: CGFloat = 900) -> some View {
     HStack(alignment: .top, spacing: 24) {
         Circle().fill(c).frame(width: 22, height: 22).padding(.top, size * 0.385)
@@ -154,14 +201,22 @@ struct Assets { let icon: NSImage; let dark: NSImage }
             .padding(.top, land ? sh : 0)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             // scene 2
+            let scene2 = VStack(alignment: .leading, spacing: 24) {
+                H("Every deploy, one glance.", 84).arrive(p(f, 78), o2)
+                H("It pops up the second a build starts.", 56, 0.62).arrive(p(f, 104), o2)
+            }
             if land {
-                left(H("Every deploy, one glance.", 84).arrive(p(f, 78), o2), w: 560)
+                left(scene2, w: 640)
             } else {
-                H("Every deploy, one glance.", 84).frame(width: 900, alignment: .leading)
-                    .arrive(p(f, 78), o2).at(90, 56 + 64)
+                scene2.frame(width: 900, alignment: .leading).at(90, 1460)
             }
             // screenshot, scenes 2-4
             shot
+            // "Deploy started" popover drops out of the menu bar icon while it spins
+            let popIn = p(f, 96, 14)
+            StartPop(fraction: 0.12 + 0.7 * clamp(Double(f - 96) / 78), angle: Double(f) * 14)
+                .scaleEffect(0.92 + 0.08 * popIn, anchor: .top).opacity(popIn * (1 - p(f, 174, 8)))
+                .at(W - (land ? 302 : 334) - 280, sh + 22)
             // scene 3 / 4 headlines
             if land {
                 left(dotHeadline("Know the second it's live.", green, size: 84, w: 760).arrive(p(f, 186), o3), w: 760)
@@ -227,14 +282,14 @@ struct Assets { let icon: NSImage; let dark: NSImage }
         canvas
         VStack(alignment: .leading, spacing: 28) {
             H("Stop refreshing your deploy dashboard.", 84).frame(width: 760, alignment: .leading)
-            body("DeployBar keeps every Cloudflare and Vercel deploy in your Mac's menu bar, and pings you the second one goes live or breaks.", 32)
+            body("DeployBar keeps every Cloudflare and Vercel deploy in your Mac's menu bar. It pops up the second a build starts, and pings you when it goes live or breaks.", 32)
                 .lineSpacing(6).frame(width: 640, alignment: .leading)
         }
         .padding(.leading, 90).padding(.top, 50)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         Shot(img: a.dark, h: sh).at(sx, (900 - sh) / 2)
-        Banner(icon: a.icon, ok: true, w: 720).at(sx - 40, (900 - sh) / 2 + 50)
-        Strip(building: false, angle: 0, w: 1600, h: 50).at(0, 0)
+        StartPop(fraction: 0.62, angle: 0).at(1600 - 302 - 280, 50 + 22)
+        Strip(building: true, angle: 0, w: 1600, h: 50).at(0, 0)
     }
 }
 
