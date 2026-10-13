@@ -101,7 +101,9 @@ struct MenuHeader: View {
                     Text(health.text).foregroundStyle([.green, .gray].contains(health.color) ? Color.secondary : health.color)
                     if store.lastUpdated != nil {
                         Text("·").foregroundStyle(.tertiary)
-                        Text(updatedText).foregroundStyle(.secondary)
+                        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                            Text(updatedText(ctx.date)).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .font(.caption)
@@ -133,10 +135,10 @@ struct MenuHeader: View {
         return (store.deploys.isEmpty ? "No deploys" : "All deploys healthy", .green)
     }
 
-    private var updatedText: String {
+    private func updatedText(_ now: Date) -> String {
         guard let t = store.lastUpdated else { return "loading" }
-        if Date().timeIntervalSince(t) < 10 { return "updated just now" }
-        return "updated " + Fmt.rel.localizedString(for: t, relativeTo: Date())
+        if now.timeIntervalSince(t) < 10 { return "updated just now" }
+        return "updated " + Fmt.rel.localizedString(for: t, relativeTo: now)
     }
 }
 
@@ -349,7 +351,10 @@ private struct BoardRow: View {
                     if !d.isProduction { PreviewTag() }
                     Spacer(minLength: 8)
                     DurationBars(app: app)
-                    Text(Fmt.rel.localizedString(for: d.createdAt, relativeTo: Date()))
+                    // Re-render each second so "27 sec ago" keeps counting between fetches.
+                    TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                        Text(Fmt.rel.localizedString(for: d.createdAt, relativeTo: ctx.date))
+                    }
                         .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                         .lineLimit(1).minimumScaleFactor(0.8)
                         .frame(width: 52, alignment: .trailing)
