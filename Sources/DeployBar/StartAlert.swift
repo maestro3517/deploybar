@@ -7,6 +7,7 @@ import AppKit
 final class StartAlert {
     static let shared = StartAlert()
     private var popover: NSPopover?
+    private var anchorWindow: NSWindow?
     private var deploys: [Deploy] = []
     private var closeTask: Task<Void, Never>?
     private var warned = false
@@ -17,11 +18,22 @@ final class StartAlert {
             deploys = merged
             popover.contentViewController = host(store)
         } else {
-            guard let anchor = NSApp.windows.first(where: { $0.className.contains("NSStatusBarWindow") && $0.isVisible }),
-                  let view = anchor.contentView else {
+            guard let icon = NSApp.windows.first(where: { $0.className.contains("NSStatusBarWindow") && $0.isVisible }) else {
                 if !warned { warned = true; NSLog("DeployBar: no menu bar window found, start alert skipped") }
                 return
             }
+            // Anchoring to the status item itself makes macOS treat the popover as the icon's menu,
+            // and SwiftUI then opens the deploy list too. Anchor to a clear stand-in over the icon instead.
+            let stand = NSWindow(contentRect: icon.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            stand.isReleasedWhenClosed = false
+            stand.isOpaque = false
+            stand.backgroundColor = .clear
+            stand.ignoresMouseEvents = true
+            stand.level = .statusBar
+            stand.collectionBehavior = [.canJoinAllSpaces, .stationary]
+            stand.orderFrontRegardless()
+            anchorWindow = stand
+            guard let view = stand.contentView else { return }
             deploys = merged
             let p = NSPopover()
             p.behavior = .applicationDefined
@@ -54,6 +66,8 @@ final class StartAlert {
         closeTask?.cancel()
         popover?.performClose(nil)
         popover = nil
+        anchorWindow?.orderOut(nil)
+        anchorWindow = nil
         deploys = []
     }
 }
