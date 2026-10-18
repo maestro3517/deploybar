@@ -48,12 +48,14 @@ extension Provider {
         switch self {
         case .cloudflare: return Color(red: 0.96, green: 0.51, blue: 0.12)
         case .vercel: return .primary
+        case .azure: return Color(red: 0.0, green: 0.47, blue: 0.84)
         }
     }
     var badgeSymbol: String {
         switch self {
         case .cloudflare: return "cloud.fill"
         case .vercel: return "triangle.fill"
+        case .azure: return "infinity"
         }
     }
 }

@@ -34,48 +34,51 @@ struct SetupView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(nsImage: NSApp.applicationIconImage)
-                    .resizable()
-                    .frame(width: 48, height: 48)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Connect your deploys").font(.title2.weight(.semibold))
-                    Text("Paste a read-only token for each platform you use. Skip the ones you don't.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .frame(width: 48, height: 48)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Connect your deploys").font(.title2.weight(.semibold))
+                        Text("Paste a read-only token for each platform you use. Skip the ones you don't.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                ForEach(Provider.allCases, id: \.self) { p in
+                    ProviderCard(provider: p, store: store, source: preview?[p] ?? p.tokenSource)
+                }
+
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "lock.shield.fill")
+                        .foregroundStyle(.green)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Your tokens stay on this Mac").font(.subheadline.weight(.semibold))
+                        Text("DeployBar saves them in your macOS Keychain and sends them only to api.cloudflare.com, api.vercel.com and dev.azure.com. There is no DeployBar server, no account and no analytics. Read-only tokens are enough.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .cardStyle(Color.green.opacity(0.06))
+
+                HStack {
+                    Spacer()
+                    if store.connected {  // not Providers.anyConnected: that reads the Keychain on every render
+                        Button("Done", action: onDone).keyboardShortcut(.defaultAction)
+                    } else {
+                        Button("Done", action: onDone)
+                    }
                 }
             }
-
-            ForEach(Provider.allCases, id: \.self) { p in
-                ProviderCard(provider: p, store: store, source: preview?[p] ?? p.tokenSource)
-            }
-
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "lock.shield.fill")
-                    .foregroundStyle(.green)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Your tokens stay on this Mac").font(.subheadline.weight(.semibold))
-                    Text("DeployBar saves them in your macOS Keychain and sends them only to api.cloudflare.com and api.vercel.com. There is no DeployBar server, no account and no analytics. Read-only tokens are enough.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .cardStyle(Color.green.opacity(0.06))
-
-            HStack {
-                Spacer()
-                if store.connected {  // not Providers.anyConnected: that reads the Keychain on every render
-                    Button("Done", action: onDone).keyboardShortcut(.defaultAction)
-                } else {
-                    Button("Done", action: onDone)
-                }
-            }
+            .padding(20)
+            .frame(width: 460)
         }
-        .padding(20)
-        .frame(width: 460)
+        .frame(maxHeight: 760)
     }
 }
 
@@ -87,11 +90,21 @@ private struct ProviderCard: View {
     @State private var token = ""
     @State private var checking = false
     @State private var error: String?
+    @State private var org = ""
+    @State private var project = ""
 
     init(provider: Provider, store: Store, source: TokenSource?) {
         self.provider = provider
         self.store = store
         _source = State(initialValue: source)
+        // Only Azure has saved org/project; reading them for other providers would hit the Keychain on every render.
+        let azure = provider == .azure ? AzureTarget.current : nil
+        _org = State(initialValue: azure?.org ?? "")
+        _project = State(initialValue: azure?.project ?? "")
+    }
+
+    private var azureMissing: Bool {
+        provider == .azure && (org.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || project.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     private var showForm: Bool { source == nil || editing }
@@ -137,6 +150,14 @@ private struct ProviderCard: View {
                         Label("Open \(provider.displayName) token page", systemImage: "arrow.up.right.square")
                     }
                     .buttonStyle(.link)
+                    if provider == .azure {
+                        HStack {
+                            TextField("Organization (e.g. acme)", text: $org)
+                                .textFieldStyle(.roundedBorder)
+                            TextField("Project", text: $project)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                    }
                     HStack {
                         SecureField(provider.setup.placeholder, text: $token)
                             .textFieldStyle(.roundedBorder)
@@ -146,7 +167,7 @@ private struct ProviderCard: View {
                         }
                         Button("Connect", action: connect)
                             .buttonStyle(.borderedProminent)
-                            .disabled(token.isEmpty || checking)
+                            .disabled(token.isEmpty || checking || azureMissing)
                         if checking { ProgressView().controlSize(.small) }
                     }
                     if let error {
@@ -161,8 +182,12 @@ private struct ProviderCard: View {
     }
 
     private func connect() {
-        checking = true
         error = nil
+        if provider == .azure, !AzureTarget.save(org: org, project: project) {
+            error = "enter your organization and project"
+            return
+        }
+        checking = true
         Task {
             if let err = await provider.check(token: token) {
                 error = err

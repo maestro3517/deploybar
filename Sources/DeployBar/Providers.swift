@@ -2,12 +2,13 @@ import Foundation
 import Security
 
 enum Provider: String, CaseIterable {
-    case cloudflare, vercel
+    case cloudflare, vercel, azure
 
     var displayName: String {
         switch self {
         case .cloudflare: return "Cloudflare"
         case .vercel: return "Vercel"
+        case .azure: return "Azure DevOps"
         }
     }
 
@@ -30,6 +31,13 @@ enum Provider: String, CaseIterable {
                         "Create a token named DeployBar. Pick the team you deploy from (or Full Account).",
                         "Copy the token."],
                 placeholder: "Vercel token")
+        case .azure:
+            return ProviderSetup(
+                tokenURL: URL(string: "https://dev.azure.com/")!,
+                steps: ["Open Azure DevOps, then User settings (top right) › Personal access tokens › New Token.",
+                        "Name it DeployBar, pick your organization, choose Custom defined and tick Build › Read. Nothing else is needed.",
+                        "Create it, copy the token, and fill in your organization and project below."],
+                placeholder: "Azure DevOps personal access token")
         }
     }
 
@@ -37,6 +45,7 @@ enum Provider: String, CaseIterable {
         switch self {
         case .cloudflare: return "cloudflare-token"
         case .vercel: return "vercel-token"
+        case .azure: return "azure-token"
         }
     }
 
@@ -50,6 +59,10 @@ enum Provider: String, CaseIterable {
             if env("VERCEL_TOKEN") != nil { return .environment("VERCEL_TOKEN") }
             if keychainValue(keychainAccount) != nil { return .keychain }
             return vercelCLIToken() != nil ? .vercelCLI : nil
+        case .azure:
+            guard AzureTarget.current != nil else { return nil }
+            if env("AZURE_DEVOPS_EXT_PAT") != nil { return .environment("AZURE_DEVOPS_EXT_PAT") }
+            return keychainValue(keychainAccount) != nil ? .keychain : nil
         }
     }
 
@@ -69,7 +82,10 @@ enum Provider: String, CaseIterable {
     }
 
     /// Deletes only the Keychain item. Env vars and the Vercel CLI login are untouched.
-    func removeToken() { keychainDelete(keychainAccount) }
+    func removeToken() {
+        keychainDelete(keychainAccount)
+        if self == .azure { AzureTarget.remove() }
+    }
 
     /// One cheap API call. nil = token works, else a short human-readable error.
     func check(token: String) async -> String? {
@@ -77,6 +93,14 @@ enum Provider: String, CaseIterable {
             switch self {
             case .cloudflare: _ = try await getJSON("\(cfBase)/accounts?per_page=1", token)  // not cloudflareAccount(): it skips the API when an account id is saved
             case .vercel: _ = try await getJSON("https://api.vercel.com/v2/user", token)
+            case .azure:
+                guard let t = AzureTarget.current else { return "add your organization and project first" }
+                do {
+                    let json = try await getJSON(azureBuildsURL(t.org, t.project, top: 1), token, basic: true)
+                    return json["value"] is [Any] ? nil : azureNotAccepted
+                } catch let e as ProviderError where e.message == "HTTP 404" {
+                    return "project not found in that organization"
+                }
             }
             return nil
         } catch {
@@ -118,6 +142,37 @@ struct Deploy: Identifiable, Hashable {
     var isActive: Bool { (state == .queued || state == .building) && createdAt > Date(timeIntervalSinceNow: -7200) }
 }
 
+enum AzureTarget {
+    /// Saved organization and project, or nil when either is missing. Env AZURE_DEVOPS_ORG / AZURE_DEVOPS_PROJECT win over Keychain.
+    static var current: (org: String, project: String)? {
+        guard let org = env("AZURE_DEVOPS_ORG") ?? keychainValue("azure-org"),
+              let project = env("AZURE_DEVOPS_PROJECT") ?? keychainValue("azure-project") else { return nil }
+        return (org, project)
+    }
+
+    /// Saves both to the Keychain after normalizing. Returns false if either is empty after trimming or the save fails.
+    @discardableResult static func save(org: String, project: String) -> Bool {
+        let o = azureOrgName(org), p = project.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !o.isEmpty && !p.isEmpty && keychainSave("azure-org", o) && keychainSave("azure-project", p)
+    }
+
+    /// Deletes both Keychain items.
+    static func remove() {
+        keychainDelete("azure-org")
+        keychainDelete("azure-project")
+    }
+}
+
+/// "https://dev.azure.com/acme/", "acme.visualstudio.com", " acme " -> "acme".
+func azureOrgName(_ input: String) -> String {
+    var s = input.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let r = s.range(of: #"^https?://"#, options: .regularExpression) { s.removeSubrange(r) }
+    if s.hasPrefix("dev.azure.com/") { s.removeFirst("dev.azure.com/".count) }
+    let first = String(s.prefix { $0 != "/" })
+    let suffix = ".visualstudio.com"
+    return first.hasSuffix(suffix) ? String(first.dropLast(suffix.count)) : first
+}
+
 enum Providers {
     static var anyConnected: Bool { Provider.allCases.contains { $0.tokenSource != nil } }
 
@@ -135,6 +190,7 @@ enum Providers {
         switch p {
         case .cloudflare: return await fetchCloudflare(token)
         case .vercel: return await fetchVercel(token)
+        case .azure: return await fetchAzure(token)
         }
     }
 }
@@ -152,6 +208,8 @@ enum SelfTest {
             ("provider setup", providerSetup),
             ("build log parsing", buildLogParsing),
             ("cloudflare auth errors", { isAuthError("Invalid token") && isAuthError("Authentication error") && !isAuthError("HTTP 500") ? nil : "isAuthError misclassifies" }),
+            ("azure mapping", azureMapping),
+            ("azure org names", azureOrgNames),
         ]
         var allPassed = true
         for (name, test) in tests {
@@ -298,6 +356,46 @@ enum SelfTest {
         return nil
     }
 
+    private static func azureMapping() -> String? {
+        let ds = azureBuilds(org: "acme", project: "p", parseJSON(azureFixture))
+        let d = byID(ds)
+        let want: [String: DeployState] = ["1": .building, "2": .queued, "3": .ready, "4": .ready,
+                                           "5": .failed, "6": .canceled, "7": .ready]
+        if ds.count != 7 || d["ado-acme-8"] != nil { return "expected 7 builds and no build 8, got \(ds.count)" }
+        for (id, state) in want where d["ado-acme-\(id)"]?.state != state {
+            return "\(id) state is \(d["ado-acme-\(id)"]?.state.rawValue ?? "missing"), want \(state.rawValue)"
+        }
+        guard let b1 = d["ado-acme-1"], let pr = d["ado-acme-7"] else { return "build 1 or 7 missing" }
+        if b1.project != "web-ci" || b1.repo != "web-repo" || b1.branch != "main" { return "build 1 project/repo/branch wrong" }
+        if b1.commit != "abcdef1" || b1.message != "feat: x" { return "build 1 commit/message wrong" }
+        if b1.url?.absoluteString != "https://dev.azure.com/acme/p/_build/results?buildId=1" { return "build 1 url wrong" }
+        if !b1.isProduction || pr.isProduction { return "production flag wrong" }
+        if abs(b1.createdAt.timeIntervalSince1970 - 1791540930.123) > 0.001 { return "7-digit fractional date not parsed" }
+        if pr.branch != "PR 7" || pr.commit?.count != 7 || pr.message != "pr title" { return "PR build branch/commit/message wrong" }
+        return nil
+    }
+
+    private static func azureOrgNames() -> String? {
+        for (input, want) in [("https://dev.azure.com/acme/", "acme"), ("acme.visualstudio.com", "acme"),
+                              (" acme ", "acme"), ("dev.azure.com/acme/proj", "acme")] where azureOrgName(input) != want {
+            return "azureOrgName(\(input)) is \(azureOrgName(input)), want \(want)"
+        }
+        return nil
+    }
+
+    private static let azureFixture = #"""
+    {"count":8,"value":[
+     {"id":1,"status":"inProgress","result":null,"sourceBranch":"refs/heads/main","sourceVersion":"abcdef1234567","queueTime":"2026-10-09T10:15:30.1234567Z","definition":{"name":"web-ci"},"repository":{"name":"web-repo"},"triggerInfo":{"ci.message":"feat: x\n\nbody"},"reason":"individualCI","_links":{"web":{"href":"https://dev.azure.com/acme/p/_build/results?buildId=1"}}},
+     {"id":2,"status":"notStarted","result":null,"sourceBranch":"refs/heads/main","sourceVersion":"abcdef1234567","queueTime":"2026-10-09T10:15:30Z","definition":{"name":"web-ci"},"repository":{"name":"web-repo"},"triggerInfo":{"ci.message":"feat: x"},"reason":"individualCI"},
+     {"id":3,"status":"completed","result":"succeeded","sourceBranch":"refs/heads/main","sourceVersion":"abcdef1234567","queueTime":"2026-10-09T10:15:30Z","definition":{"name":"web-ci"},"repository":{"name":"web-repo"},"triggerInfo":{"ci.message":"feat: x"},"reason":"individualCI"},
+     {"id":4,"status":"completed","result":"partiallySucceeded","sourceBranch":"refs/heads/main","sourceVersion":"abcdef1234567","queueTime":"2026-10-09T10:15:30Z","definition":{"name":"web-ci"},"repository":{"name":"web-repo"},"triggerInfo":{"ci.message":"feat: x"},"reason":"individualCI"},
+     {"id":5,"status":"completed","result":"failed","sourceBranch":"refs/heads/main","sourceVersion":"abcdef1234567","queueTime":"2026-10-09T10:15:30Z","definition":{"name":"web-ci"},"repository":{"name":"web-repo"},"triggerInfo":{"ci.message":"feat: x"},"reason":"individualCI"},
+     {"id":6,"status":"completed","result":"canceled","sourceBranch":"refs/heads/main","sourceVersion":"abcdef1234567","queueTime":"2026-10-09T10:15:30Z","definition":{"name":"web-ci"},"repository":{"name":"web-repo"},"triggerInfo":{"ci.message":"feat: x"},"reason":"individualCI"},
+     {"id":7,"status":"completed","result":"succeeded","sourceBranch":"refs/pull/7/merge","sourceVersion":"1111111aaaa","queueTime":"2026-10-09T10:15:30Z","definition":{"name":"web-ci"},"repository":{"name":"web-repo"},"triggerInfo":{"pr.title":"pr title"},"reason":"pullRequest"},
+     {"id":8,"status":"completed","result":"succeeded","sourceBranch":"refs/heads/main","sourceVersion":"abcdef1234567","queueTime":"2026-10-09T10:15:30Z","repository":{"name":"web-repo"},"reason":"individualCI"}
+    ]}
+    """#
+
     private static let vercelFixture = #"""
     {"deployments":[
      {"uid":"v1","name":"web","state":"READY","target":"production","created":1791540930123,"inspectorUrl":"https://vercel.com/x/v1","meta":{"githubCommitRef":"main","githubCommitSha":"abcdef1234567","githubCommitMessage":"fix: thing\n\nlong body","githubRepo":"web-repo"}},
@@ -418,6 +516,40 @@ func pagesDeploys(account: String, _ json: [String: Any]) -> [Deploy] {
     }
 }
 
+func azureBuilds(org: String, project: String, _ json: [String: Any]) -> [Deploy] {
+    (json["value"] as? [[String: Any]] ?? []).compactMap { b -> Deploy? in
+        guard let id = b["id"] as? Int, let defName = (b["definition"] as? [String: Any])?["name"] as? String else { return nil }
+        let src = b["sourceBranch"] as? String
+        let pr = src?.split(separator: "/").dropFirst(2).first  // refs/pull/123/merge
+        let trigger = b["triggerInfo"] as? [String: Any]
+        let web = (b["_links"] as? [String: Any])?["web"] as? [String: Any]
+        return Deploy(
+            id: "ado-\(org)-\(id)", provider: .azure, project: defName,
+            repo: (b["repository"] as? [String: Any])?["name"] as? String ?? defName,
+            branch: src.map { $0.hasPrefix("refs/pull/") ? "PR \(pr ?? "")" : $0.replacingOccurrences(of: "refs/heads/", with: "") },
+            commit: sha7(b["sourceVersion"] as? String),
+            message: firstLine((trigger?["ci.message"] ?? trigger?["pr.title"]) as? String),
+            state: azureState(status: b["status"] as? String ?? "", result: b["result"] as? String),
+            createdAt: parseISO(b["queueTime"] as? String) ?? .distantPast,
+            finishedAt: parseISO(b["finishTime"] as? String),
+            url: (web?["href"] as? String).flatMap(URL.init(string:)),
+            isProduction: (b["reason"] as? String) != "pullRequest" && src?.hasPrefix("refs/pull/") != true)
+    }
+}
+
+private func azureState(status: String, result: String?) -> DeployState {
+    switch status {
+    case "notStarted", "postponed", "none": return .queued
+    case "inProgress", "cancelling": return .building
+    default:
+        switch result {
+        case "succeeded", "partiallySucceeded": return .ready
+        case "canceled": return .canceled
+        default: return .failed
+        }
+    }
+}
+
 private func vercelState(_ s: String) -> DeployState {
     switch s {
     case "READY": return .ready
@@ -522,6 +654,23 @@ private func fetchVercel(_ token: String) async -> ([Deploy], [String]) {
     return (deploys, errors)
 }
 
+private let azureNotAccepted = "token not accepted (check it has Build › Read and the organization is right)"
+
+private func azureBuildsURL(_ org: String, _ project: String, top: Int) -> String {
+    let p = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+    return "https://dev.azure.com/\(org)/\(p)/_apis/build/builds?api-version=7.1&queryOrder=queueTimeDescending&$top=\(top)"
+}
+
+private func fetchAzure(_ token: String) async -> ([Deploy], [String]) {
+    guard let t = AzureTarget.current else { return ([], []) }
+    do {
+        let json = try await getJSON(azureBuildsURL(t.org, t.project, top: 50), token, basic: true)
+        return (azureBuilds(org: t.org, project: t.project, json), [])
+    } catch {
+        return ([], [errLine("Azure DevOps", error)])
+    }
+}
+
 private func fetchCloudflare(_ token: String) async -> ([Deploy], [String]) {
     let acct: String
     do {
@@ -596,17 +745,21 @@ private func cloudflareAccount(_ token: String) async throws -> String {
     return id
 }
 
-private func getAny(_ url: String, _ token: String) async throws -> Any {
+private func getAny(_ url: String, _ token: String, basic: Bool = false) async throws -> Any {
     guard let u = URL(string: url) else { throw ProviderError(message: "bad URL") }
     var req = URLRequest(url: u)
     req.timeoutInterval = 20
-    req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    req.setValue(basic ? "Basic \(Data(":\(token)".utf8).base64EncodedString())" : "Bearer \(token)", forHTTPHeaderField: "Authorization")
     let (data, resp) = try await URLSession.shared.data(for: req)
-    let any = (try? JSONSerialization.jsonObject(with: data)) ?? [String: Any]()
+    let parsed = try? JSONSerialization.jsonObject(with: data)
+    // Azure answers a bad PAT with HTTP 203 and an HTML sign-in page.
+    if basic && parsed == nil { throw ProviderError(message: azureNotAccepted) }
+    let any = parsed ?? [String: Any]()
     let json = any as? [String: Any] ?? [:]
     let cfErr = (json["errors"] as? [[String: Any]])?.first?["message"] as? String
     let vercelErr = (json["error"] as? [String: Any])?["message"] as? String
-    if let m = cfErr ?? vercelErr { throw ProviderError(message: m) }
+    let azureErr = json["typeKey"] != nil ? json["message"] as? String : nil
+    if let m = cfErr ?? vercelErr ?? azureErr { throw ProviderError(message: m) }
     if let code = (resp as? HTTPURLResponse)?.statusCode, !(200..<300).contains(code) {
         throw ProviderError(message: "HTTP \(code)")
     }
@@ -614,8 +767,8 @@ private func getAny(_ url: String, _ token: String) async throws -> Any {
     return any
 }
 
-private func getJSON(_ url: String, _ token: String) async throws -> [String: Any] {
-    (try await getAny(url, token)) as? [String: Any] ?? [:]
+private func getJSON(_ url: String, _ token: String, basic: Bool = false) async throws -> [String: Any] {
+    (try await getAny(url, token, basic: basic)) as? [String: Any] ?? [:]
 }
 
 // MARK: - Tokens
@@ -688,7 +841,8 @@ private func firstLine(_ s: String?) -> String? {
 }
 
 private func parseISO(_ s: String?) -> Date? {
-    guard let s else { return nil }
+    // Azure sends 7 fractional digits; the formatter takes 3.
+    guard let s = s?.replacingOccurrences(of: #"(\.\d{3})\d+"#, with: "$1", options: .regularExpression) else { return nil }
     let f = ISO8601DateFormatter()
     f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     if let d = f.date(from: s) { return d }
