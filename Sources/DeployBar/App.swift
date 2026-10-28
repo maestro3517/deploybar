@@ -89,7 +89,7 @@ enum Launcher {
             if demo, let timelineApp { render("timeline-\(name).png", look, TimelinePopover(app: timelineApp)) }
             if demo, let failedApp { render("failure-\(name).png", look, TimelinePopover(app: failedApp, logPreview: demoFailureLog)) }
             if demo, let startApp {
-                render("start-\(name).png", look, StartAlertView(deploys: [startApp.latest], store: store, onClose: {}, onHover: { _ in }))
+                render("start-\(name).png", look, StartAlertView(deploys: [startApp.latest], store: store, onClose: {}))
             }
             if demo {
                 render("setup-\(name).png", look, SetupView(store: store, onDone: {}, preview: [.vercel: .vercelCLI, .cloudflare: nil]))
@@ -305,6 +305,7 @@ final class Store: ObservableObject {
         firstLoad = false
         notificationsAllowed = await Notifier.shared.allowed()
         deploys = fresh
+        StartAlert.shared.update(fresh)
         errors = errs
         lastUpdated = Date()
         loading = false

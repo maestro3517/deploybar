@@ -9,7 +9,6 @@ final class StartAlert {
     private var popover: NSPopover?
     private var anchorWindow: NSWindow?
     private var deploys: [Deploy] = []
-    private var closeTask: Task<Void, Never>?
     private var warned = false
 
     func show(_ new: [Deploy], store: Store) {
@@ -42,28 +41,23 @@ final class StartAlert {
             popover = p
             p.show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
         }
-        restartTimer(10)
+    }
+
+    /// Stays open while any of its deploys is still running; closes once they have all finished.
+    /// A deploy missing from `fresh` (failed fetch) keeps its last known state.
+    func update(_ fresh: [Deploy]) {
+        guard popover != nil else { return }
+        deploys = deploys.map { d in fresh.first { $0.id == d.id } ?? d }
+        if !deploys.contains(where: \.isActive) { close() }
     }
 
     private func host(_ store: Store) -> NSViewController {
         NSHostingController(rootView: StartAlertView(
             deploys: deploys, store: store,
-            onClose: { [weak self] in self?.close() },
-            onHover: { [weak self] inside in
-                if inside { self?.closeTask?.cancel() } else { self?.restartTimer(4) }
-            }))
-    }
-
-    private func restartTimer(_ seconds: UInt64) {
-        closeTask?.cancel()
-        closeTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
-            if !Task.isCancelled { self?.close() }
-        }
+            onClose: { [weak self] in self?.close() }))
     }
 
     private func close() {
-        closeTask?.cancel()
         popover?.performClose(nil)
         popover = nil
         anchorWindow?.orderOut(nil)
@@ -76,7 +70,6 @@ struct StartAlertView: View {
     let deploys: [Deploy]
     @ObservedObject var store: Store
     let onClose: () -> Void
-    let onHover: (Bool) -> Void
 
     private func typical(_ d: Deploy) -> TimeInterval? {
         store.groups.flatMap(\.apps).first { $0.id == "\(d.provider.rawValue)/\(d.project)" }?.typicalDuration
@@ -93,7 +86,9 @@ struct StartAlertView: View {
                     .help("Close")
                     .accessibilityLabel("Close")
             }
-            ForEach(Array(deploys.enumerated()), id: \.element.id) { i, d in
+            // Read live state from the store so the stage and progress keep moving while the bubble is open.
+            let live = deploys.map { d in store.deploys.first { $0.id == d.id } ?? d }
+            ForEach(Array(live.enumerated()), id: \.element.id) { i, d in
                 if i > 0 { Divider() }
                 DeployButton(deploy: d, label: "\(d.project) on \(d.provider.displayName) started",
                              action: {
@@ -117,7 +112,6 @@ struct StartAlertView: View {
         }
         .padding(12)
         .frame(width: 320)
-        .onHover(perform: onHover)
     }
 }
 
