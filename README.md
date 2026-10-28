@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/icon.png" width="128" alt="DeployBar app icon"></p>
 <h1 align="center">DeployBar</h1>
-<p align="center"><b>Stop refreshing your deploy dashboard.</b><br>Every Cloudflare and Vercel deploy, in your Mac's menu bar.</p>
+<p align="center"><b>Stop refreshing your deploy dashboard.</b><br>Every Cloudflare, Vercel and Azure DevOps deploy, in your Mac's menu bar.</p>
 
 <p align="center">
   <picture>
@@ -17,15 +17,15 @@ You ship ten times a day. Your AI agent pushes, a build starts somewhere, and yo
 
 ## Why you'll keep it open
 
-- **Know the second it starts.** A small popover slides out of the menu bar icon when a build starts, with a live progress bar. It never takes focus from what you're typing.
-- **Know the second it's live.** A notification for every deploy that finishes, with the project, branch and commit message. Click it to jump to the deploy.
+- **Know the second it starts.** A small popover slides out of the menu bar icon when a build starts, with a live progress bar. It stays until the build finishes or you close it, and never takes focus from what you're typing.
+- **Know the second it's live.** A notification for every deploy that finishes, with the project, branch and commit message. Failed builds get a red mark so they stand out. Click it to jump to the deploy.
 - **Know the second it breaks.** Failed apps turn red and show the commit that broke them, so you know exactly what to fix (or what to paste back into your AI).
 - **Hand the error to your AI.** Click a failed app to see the tail of its build log, then Copy for AI to put the error, commit and log on your clipboard as a ready-made prompt for Claude Code, Cursor or Codex.
 - **See how long you'll wait.** A live progress bar against that app's usual build time: "About 27s left".
 - **Spot slow builds.** Each app shows a bar for each recent build. Taller means slower, red means failed.
-- **Click for the story.** Click an app to see its recent deploys as a timeline: when, which commit, how long. Click any of them, or Open in Vercel / Cloudflare, to jump to the dashboard.
-- **All your projects, one glance.** Cloudflare Workers, Pages and Vercel side by side, grouped by repo.
-- **Free, open source, private.** Runs on your Mac and talks only to the Cloudflare and Vercel APIs. Your tokens stay in your Keychain.
+- **Click for the story.** Click an app to see its recent deploys as a timeline: when, which commit, how long. Click any of them, or Open in Vercel / Cloudflare / Azure DevOps, to jump to the dashboard.
+- **All your projects, one glance.** Cloudflare Workers, Pages, Vercel and Azure DevOps Pipelines side by side, grouped by repo.
+- **Free, open source, private.** Runs on your Mac and talks only to the Cloudflare, Vercel and Azure DevOps APIs. Your tokens stay in your Keychain.
 
 <p align="center">
   <picture>
@@ -46,21 +46,24 @@ git clone https://github.com/maestro3517/deploybar.git && cd deploybar && ./buil
 
 This builds the app, copies it to `~/Applications` and opens it.
 
-**2. Connect your accounts.** On first launch DeployBar opens a setup window. For each platform it links to the token page (the Cloudflare link pre-fills a read-only token), you paste the token and it checks it before saving. Already logged in with `vercel login`? Vercel connects by itself. Reopen the window any time from **Accounts…** in the menu.
+**2. Connect your accounts.** On first launch DeployBar opens a setup window. For each platform it links to the token page (the Cloudflare link pre-fills a read-only token), you paste the token and it checks it before saving. Already logged in with `vercel login`? Vercel connects by itself. For Azure DevOps, create a personal access token with only **Build › Read**, then enter your organization (`acme` or `https://dev.azure.com/acme`) and project. Reopen the window any time from **Accounts…** in the menu.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/setup-dark.png">
   <img src="assets/setup-light.png" width="460" alt="Setup window: paste a read-only token for each platform">
 </picture>
 
-**Your tokens stay on your Mac.** DeployBar saves them in your macOS Keychain and sends them only to api.cloudflare.com and api.vercel.com. There is no DeployBar server, no account and no analytics. Read-only tokens are enough.
+**Your tokens stay on your Mac.** DeployBar saves them in your macOS Keychain and sends them only to api.cloudflare.com, api.vercel.com and dev.azure.com. There is no DeployBar server, no account and no analytics. Read-only tokens are enough.
 
-**Prefer the terminal?** Set `CLOUDFLARE_API_TOKEN` or `VERCEL_TOKEN` in your environment, or save the token to your Keychain yourself. Got several Cloudflare accounts? Save the account id too (otherwise the first account is used):
+**Prefer the terminal?** Set `CLOUDFLARE_API_TOKEN`, `VERCEL_TOKEN` or `AZURE_DEVOPS_EXT_PAT` (with `AZURE_DEVOPS_ORG` and `AZURE_DEVOPS_PROJECT`) in your environment, or save the token to your Keychain yourself. Got several Cloudflare accounts? Save the account id too (otherwise the first account is used):
 
 ```bash
 security add-generic-password -s deploybar -a cloudflare-token -w <API token>
 security add-generic-password -s deploybar -a vercel-token -w <API token>
 security add-generic-password -s deploybar -a cloudflare-account -w <account id>
+security add-generic-password -s deploybar -a azure-token -w <personal access token>
+security add-generic-password -s deploybar -a azure-org -w <organization>
+security add-generic-password -s deploybar -a azure-project -w <project>
 ```
 
 **3. Allow notifications** when macOS asks. Missed it? The menu shows a Turn On… button.
