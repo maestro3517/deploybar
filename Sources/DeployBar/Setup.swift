@@ -78,7 +78,7 @@ struct SetupView: View {
             .padding(20)
             .frame(width: 460)
         }
-        .frame(maxHeight: 760)
+        .frame(height: 700)  // ScrollView has no ideal height; without a fixed one the window opens with no content
     }
 }
 
