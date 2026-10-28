@@ -145,17 +145,38 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate, @unchecked Sen
     func post(_ d: Deploy) {
         let c = UNMutableNotificationContent()
         c.title = d.state == .ready ? "\(d.project) deployed on \(d.provider.displayName)"
-                                    : "\(d.project) failed on \(d.provider.displayName)"
+                                    // macOS banners take no custom colours; the red mark is how a failure stands out.
+                                    : "🔴 \(d.project) failed on \(d.provider.displayName)"
         c.subtitle = (d.isProduction ? "Production" : "Preview") + (d.branch.map { " · \($0)" } ?? "")
         let body = [d.commit, d.message].compactMap { $0 }.joined(separator: " · ")
         c.body = body.isEmpty ? "No commit message" : body
         c.sound = .default
         c.threadIdentifier = d.project
         c.userInfo = ["url": d.url?.absoluteString ?? ""]
+        if d.state == .failed, let url = Self.failureThumbnail(),
+           let thumb = try? UNNotificationAttachment(identifier: "failed", url: url) {
+            c.attachments = [thumb]
+        }
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: "\(d.id)-\(d.state.rawValue)", content: c, trigger: nil)) { error in
             if let error { NSLog("DeployBar notifications: %@", "\(error)") }
         }
+    }
+
+    /// Red ✕ for a failed build's banner thumbnail. The system moves the file it is given, so write a new one each time.
+    static func failureThumbnail() -> URL? {
+        let img = NSImage(size: NSSize(width: 128, height: 128), flipped: false) { r in
+            NSColor.systemRed.setFill()
+            NSBezierPath(roundedRect: r, xRadius: 28, yRadius: 28).fill()
+            guard let x = NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 60, weight: .heavy).applying(.init(paletteColors: [.white]))) else { return false }
+            x.draw(in: NSRect(x: r.midX - x.size.width / 2, y: r.midY - x.size.height / 2, width: x.size.width, height: x.size.height))
+            return true
+        }
+        guard let tiff = img.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return nil }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("deploybar-failed-\(UUID().uuidString).png")
+        return (try? png.write(to: url)) == nil ? nil : url
     }
 
     func allowed() async -> Bool {
